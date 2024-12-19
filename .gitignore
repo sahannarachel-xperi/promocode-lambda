@@ -1,0 +1,38 @@
+*~
+#Build temp files:
+coverage
+pkg
+tmp
+run.sh
+build
+
+# Deployment temp files:
+/deploy/.terraform*
+/deploy/apigw-authorizer.zip
+/deploy/terraform.plan
+/terraform/.terraform
+tf*
+
+#ide setup files
+.idea
+*.iml
+
+#generated files:
+/generated/tivolambdaquickstart/*_types.go
+/generated/tivolambdaquickstart/*_client.go
+/tivo-lambda-quickstart.zip
+/tivo-lambda-quickstart.info
+/tivo-lambda-quickstart
+/tivo-lambda-quickstart_linux_arm64
+
+# Mac OS created file
+.DS_Store
+
+# Generated schema files:
+/generated
+# Build
+bin/
+testdata/
+
+# Local development
+docker-compose.yml
