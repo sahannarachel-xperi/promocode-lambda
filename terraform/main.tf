@@ -43,23 +43,36 @@ resource "aws_iam_policy" "lambda_policy" {
         Effect = "Allow"
         Action = [
           "logs:CreateLogStream",
-          "logs:PutLogEvents"
+          "logs:PutLogEvents",
+          "logs:CreateLogGroup"
         ]
         Resource = "arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.function_name}:*"
       },
       {
         Effect = "Allow"
         Action = [
-          "s3:GetObject"
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:GetBucketNotification",
+          "s3:PutBucketNotification"
         ]
-        Resource = "arn:aws:s3:::${var.s3_source_bucket_name}/qe-ft/*"
+        Resource = [
+          "arn:aws:s3:::${var.s3_source_bucket_name}",
+          "arn:aws:s3:::${var.s3_source_bucket_name}/qe-ft/*"
+        ]
       },
       {
         Effect = "Allow"
         Action = [
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
-          "dynamodb:GetItem"
+          "dynamodb:GetItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:BatchGetItem",
+          "dynamodb:DescribeTable"
         ]
         Resource = [
           "arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/Campaigns",
@@ -107,8 +120,12 @@ resource "aws_s3_bucket_notification" "lambda_trigger" {
 
   lambda_function {
     lambda_function_arn = aws_lambda_function.lambda.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = "qe-ft/"
+    events = [
+      "s3:ObjectCreated:Put",
+      "s3:ObjectCreated:Post",
+      "s3:ObjectRemoved:*"
+    ]
+    filter_prefix = "qe-ft/"
   }
 }
 
@@ -145,27 +162,25 @@ resource "aws_cloudwatch_event_rule" "lambda_event_rule" {
   description   = "This resource is used to create s3 object events for lambda function."
   state         = "ENABLED"
   tags          = local.tags
-  event_pattern = <<EOF
-              {
-                "detail-type": [
-                  "Object Created"
-                ],
-                "source": [
-                  "aws.s3"
-                ],
-                "detail": {
-                    "bucket": {
-                      "name": ["${var.s3_source_bucket_name}"]
-                    },
-                    "object": {
-                          "key":[
-                          {
-                            "prefix": "${var.instance_name}/${var.event_trigger_file_name}"
-                          }]
-                    }
-                }
-              }
-            EOF
+  event_pattern = jsonencode({
+    source      = ["aws.s3"]
+    detail-type = ["AWS API Call via CloudTrail"]
+    detail = {
+      eventSource = ["s3.amazonaws.com"]
+      eventName   = [
+        "PutObject",
+        "DeleteObject",
+        "DeleteObjects",
+        "CompleteMultipartUpload"
+      ]
+      requestParameters = {
+        bucketName = [var.s3_source_bucket_name]
+        key = [{
+          prefix = "qe-ft/"
+        }]
+      }
+    }
+  })
 }
 
 resource "aws_cloudwatch_event_target" "lambda_event_rule_target" {

@@ -18,11 +18,9 @@ import (
 
 // Global variables for AWS resources and configuration
 var (
-	region   string              // AWS region to be set from environment variables
-	dynamoDb *dynamodb.Client    // DynamoDB client to interact with DynamoDB tables
+	region   string           // AWS region to be set from environment variables
+	dynamoDb *dynamodb.Client // DynamoDB client to interact with DynamoDB tables
 )
-
-
 
 func coldStart(ctx context.Context) error {
 	// Load AWS region from environment variable
@@ -64,6 +62,11 @@ func setLogLevel() {
 
 // handleRequest processes S3 events for campaign and promocode files
 func handleRequest(ctx context.Context, s3Event events.S3Event) error {
+	// Initialize AWS clients if not already done
+	if err := coldStart(ctx); err != nil {
+		return fmt.Errorf("failed to initialize AWS clients: %v", err)
+	}
+
 	// Load the AWS SDK configuration
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -73,28 +76,32 @@ func handleRequest(ctx context.Context, s3Event events.S3Event) error {
 	// Create an S3 client using the loaded configuration
 	s3Client := s3.NewFromConfig(cfg)
 
-	// Iterate through each S3 event record
 	for _, record := range s3Event.Records {
-		bucket := record.S3.Bucket.Name // Extract bucket name from the event
-		key := record.S3.Object.Key    // Extract object key (file path) from the event
+		log.Printf("Processing event: %s for bucket: %s, key: %s",
+			record.EventName, record.S3.Bucket.Name, record.S3.Object.Key)
 
-		// Retrieve the file from the S3 bucket
-		data, err := utils.GetFileFromS3WithClient(ctx, s3Client, bucket, key)
-		if err != nil {
-			return fmt.Errorf("failed to get file from S3: %v", err)
-		}
-
-		// Determine the type of file based on its path and route to the appropriate handler
-		isPromoCode := strings.Contains(key, "promocodes/") // Check if the file is related to promo codes
-		if isPromoCode {
-			// Handle promo code files
-			if err := handlers.HandlePromoCode(ctx, record, data, dynamoDb); err != nil {
-				return fmt.Errorf("failed to handle promo code: %v", err)
+		// Handle different event types
+		switch record.EventName {
+		case "ObjectRemoved:Delete", "ObjectRemoved:DeleteMarkerCreated":
+			if err := handlers.HandleDeletion(ctx, record, dynamoDb, s3Client); err != nil {
+				return fmt.Errorf("failed to handle deletion: %v", err)
 			}
-		} else {
-			// Handle campaign files
-			if err := handlers.HandleCampaign(ctx, record, data, dynamoDb); err != nil {
-				return fmt.Errorf("failed to handle campaign: %v", err)
+		case "ObjectCreated:Put", "ObjectCreated:Post":
+			// Get the object from S3
+			data, err := utils.GetFileFromS3WithClient(ctx, s3Client, record.S3.Bucket.Name, record.S3.Object.Key)
+			if err != nil {
+				return fmt.Errorf("failed to get object from S3: %v", err)
+			}
+
+			// Determine handler based on path
+			if strings.Contains(record.S3.Object.Key, "/campaigns/") {
+				if err := handlers.HandleCampaign(ctx, record, data, dynamoDb); err != nil {
+					return fmt.Errorf("failed to handle campaign: %v", err)
+				}
+			} else if strings.Contains(record.S3.Object.Key, "/promocodes/") {
+				if err := handlers.HandlePromoCode(ctx, record, data, dynamoDb); err != nil {
+					return fmt.Errorf("failed to handle promocode: %v", err)
+				}
 			}
 		}
 	}

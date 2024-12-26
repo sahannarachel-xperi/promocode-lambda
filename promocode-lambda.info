@@ -1,7 +1,7 @@
 {
   "build_tag"       : "local",
-  "build_timestamp" : "2024-12-19 09:20:56 UTC",
+  "build_timestamp" : "2024-12-26 14:16:53 UTC",
   "function"        : "promocode-lambda",
-  "git_branch"      : "",
-  "git_commit"      : ""
+  "git_branch"      : "main",
+  "git_commit"      : "4b8846cb543062d56421d26bb2b3a5f26fcb5139"
 }
