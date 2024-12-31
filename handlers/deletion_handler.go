@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -28,35 +29,44 @@ func HandleDeletion(ctx context.Context, event events.S3EventRecord, dynamoClien
 	}
 
 	// Parse and validate the S3 path structure
-	// Expected format for campaigns: qe-ft/campaigns/advertiser/campaign_id/config.json
-	// Expected format for promocodes: qe-ft/promocodes/advertiser/campaign_id/uuid/filename.txt
+	// Expected format: qe-ft/campaigns/advertiser/campaign_id.json
 	pathParts := strings.Split(event.S3.Object.Key, "/")
 	if len(pathParts) < 4 {
 		return fmt.Errorf("invalid path structure: %s", event.S3.Object.Key)
 	}
 
-	// Extract campaignID and advertiser
+	// Extract advertiser and campaign ID
 	advertiser := pathParts[2]
-	campaignID := pathParts[3]
-	log.Printf("[DEBUG] Parsed campaign ID: %s for advertiser: %s", campaignID, advertiser)
+	campaignIDWithExt := pathParts[3]
 
-	switch pathParts[1] {
-	case "campaigns":
-		log.Printf("[INFO] Initiating campaign deletion for ID: %s from advertiser: %s", campaignID, advertiser)
-		if err := handleCampaignDeletion(ctx, campaignID, dynamoClient); err != nil {
-			if !strings.Contains(err.Error(), "does not exist") {
-				return err
-			}
+	// Remove the .json extension from campaign ID
+	campaignID := strings.TrimSuffix(campaignIDWithExt, ".json")
+
+	log.Printf("[DEBUG] Parsed campaign ID: %s for advertiser: %s", campaignID, advertiser)
+	log.Printf("[INFO] Initiating campaign deletion for ID: %s from advertiser: %s", campaignID, advertiser)
+
+	// Delete the campaign from DynamoDB
+	log.Printf("[INFO] Deleting campaign with ID: %s", campaignID)
+	_, err = dynamoClient.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String("ads-qrcode-promotions-qe-ft-campaign"),
+			Key: map[string]types.AttributeValue{
+				"campaignId": &types.AttributeValueMemberS{Value: campaignID},
+			},
+	})
+
+	if err != nil {
+		var notFoundErr *types.ResourceNotFoundException
+		if errors.As(err, &notFoundErr) {
+			log.Printf("[ERROR] Campaign with ID %s does not exist", campaignID)
 			log.Printf("[INFO] Campaign %s already deleted", campaignID)
+		} else {
+			return fmt.Errorf("failed to delete campaign: %v", err)
 		}
-		return cleanupPromocodes(ctx, campaignID, dynamoClient)
-	case "promocodes":
-		log.Printf("[INFO] Initiating promocode deletion for campaign ID: %s", campaignID)
-		return handlePromocodeDeletion(ctx, campaignID, dynamoClient)
-	default:
-		log.Printf("[ERROR] Unknown deletion type for path: %s", event.S3.Object.Key)
-		return fmt.Errorf("unknown deletion type for path: %s", event.S3.Object.Key)
 	}
+
+	log.Printf("[INFO] Successfully deleted campaign: %s", campaignID)
+	log.Printf("[INFO] Starting cleanup of associated promocodes")
+	return cleanupPromocodes(ctx, campaignID, dynamoClient)
 }
 
 func handleCampaignDeletion(ctx context.Context, campaignID string, dynamoClient DynamoDBAPI) error {
