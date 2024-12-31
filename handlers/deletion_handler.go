@@ -27,22 +27,22 @@ func HandleDeletion(ctx context.Context, event events.S3EventRecord, dynamoClien
 		return fmt.Errorf("file still exists in S3: %s", event.S3.Object.Key)
 	}
 
-	// Parse path parts: qe-ft/campaigns/advertiser/campaignName.json
+	// Parse and validate the S3 path structure
+	// Expected format for campaigns: qe-ft/campaigns/advertiser/campaign_id/config.json
+	// Expected format for promocodes: qe-ft/promocodes/advertiser/campaign_id/uuid/filename.txt
 	pathParts := strings.Split(event.S3.Object.Key, "/")
 	if len(pathParts) < 4 {
-		log.Printf("[ERROR] Invalid path structure: %s", event.S3.Object.Key)
 		return fmt.Errorf("invalid path structure: %s", event.S3.Object.Key)
 	}
 
-	// Extract campaignID from the filename (without .json extension)
-	campaignID := strings.TrimSuffix(pathParts[3], ".json")
+	// Extract campaignID and advertiser
 	advertiser := pathParts[2]
+	campaignID := pathParts[3]
 	log.Printf("[DEBUG] Parsed campaign ID: %s for advertiser: %s", campaignID, advertiser)
 
 	switch pathParts[1] {
 	case "campaigns":
 		log.Printf("[INFO] Initiating campaign deletion for ID: %s from advertiser: %s", campaignID, advertiser)
-		// Don't return error if campaign doesn't exist - it's already deleted
 		if err := handleCampaignDeletion(ctx, campaignID, dynamoClient); err != nil {
 			if !strings.Contains(err.Error(), "does not exist") {
 				return err

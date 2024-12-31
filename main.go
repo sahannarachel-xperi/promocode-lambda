@@ -62,50 +62,58 @@ func setLogLevel() {
 
 // handleRequest processes S3 events for campaign and promocode files
 func handleRequest(ctx context.Context, s3Event events.S3Event) error {
-	// Initialize AWS clients if not already done
 	if err := coldStart(ctx); err != nil {
 		return fmt.Errorf("failed to initialize AWS clients: %v", err)
 	}
 
-	// Load the AWS SDK configuration
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to load SDK config: %v", err)
 	}
 
-	// Create an S3 client using the loaded configuration
 	s3Client := s3.NewFromConfig(cfg)
 
 	for _, record := range s3Event.Records {
-		log.Printf("Processing event: %s for bucket: %s, key: %s",
-			record.EventName, record.S3.Bucket.Name, record.S3.Object.Key)
+		// Extract advertiser from path
+		// Expected path format: qe-ft/[type]/[advertiser]/[campaignId]/...
+		pathParts := strings.Split(record.S3.Object.Key, "/")
+		if len(pathParts) < 4 {
+			return fmt.Errorf("invalid path structure: %s, expected qe-ft/type/advertiser/campaignId/...", record.S3.Object.Key)
+		}
 
-		// Handle different event types
+		// Get advertiser name from the correct path segment
+		advertiser := pathParts[2]
+		// Remove any campaign ID or other suffixes from advertiser name
+		advertiser = strings.Split(advertiser, "-")[0] // This will get "disney" from "disney1" or "disney-campaign1"
+
+		// Get appropriate handler for the advertiser
+		handler, err := handlers.GetAdvertiserHandler(advertiser)
+		if err != nil {
+			return fmt.Errorf("advertiser handler error: %v (path: %s)", err, record.S3.Object.Key)
+		}
+
 		switch record.EventName {
 		case "ObjectRemoved:Delete", "ObjectRemoved:DeleteMarkerCreated":
-			if err := handlers.HandleDeletion(ctx, record, dynamoDb, s3Client); err != nil {
+			if err := handler.HandleDeletion(ctx, record, dynamoDb, s3Client); err != nil {
 				return fmt.Errorf("failed to handle deletion: %v", err)
 			}
 		case "ObjectCreated:Put", "ObjectCreated:Post":
-			// Get the object from S3
 			data, err := utils.GetFileFromS3WithClient(ctx, s3Client, record.S3.Bucket.Name, record.S3.Object.Key)
 			if err != nil {
 				return fmt.Errorf("failed to get object from S3: %v", err)
 			}
 
-			// Determine handler based on path
 			if strings.Contains(record.S3.Object.Key, "/campaigns/") {
-				if err := handlers.HandleCampaign(ctx, record, data, dynamoDb); err != nil {
+				if err := handler.HandleCampaign(ctx, record, data, dynamoDb); err != nil {
 					return fmt.Errorf("failed to handle campaign: %v", err)
 				}
 			} else if strings.Contains(record.S3.Object.Key, "/promocodes/") {
-				if err := handlers.HandlePromoCode(ctx, record, data, dynamoDb); err != nil {
+				if err := handler.HandlePromoCode(ctx, record, data, dynamoDb); err != nil {
 					return fmt.Errorf("failed to handle promocode: %v", err)
 				}
 			}
 		}
 	}
-
 	return nil
 }
 

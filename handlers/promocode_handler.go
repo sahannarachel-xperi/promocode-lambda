@@ -28,14 +28,15 @@ func HandlePromoCode(ctx context.Context, event events.S3EventRecord, data []byt
 		return fmt.Errorf("invalid file type, expected TXT file for promocodes, got: %s", event.S3.Object.Key)
 	}
 
-	// Parse and validate the S3 path structure - Expected format: qe-ft/promocodes/campaignId/uuid/filename.txt
+	// Parse and validate the S3 path structure
+	// Expected format: qe-ft/promocodes/advertiser/campaign_id/uuid/filename.txt
 	pathParts := strings.Split(event.S3.Object.Key, "/")
-	if len(pathParts) < 5 {
-		return fmt.Errorf("invalid path structure: %s, expected qe-ft/promocodes/campaignId/uuid/filename.txt", event.S3.Object.Key)
+	if len(pathParts) < 6 {
+		return fmt.Errorf("invalid path structure: %s, expected qe-ft/promocodes/advertiser/campaign_id/uuid/filename.txt", event.S3.Object.Key)
 	}
 
-	// Extract campaignId from the path
-	campaignId := pathParts[2]
+	// Extract campaignId from the path (now at index 3)
+	campaignId := pathParts[3]
 
 	// Verify that the campaign exists in DynamoDB before processing promo codes
 	_, err := dynamoClient.GetItem(ctx, &dynamodb.GetItemInput{
