@@ -62,6 +62,8 @@ func setLogLevel() {
 
 // handleRequest processes S3 events for campaign and promocode files
 func handleRequest(ctx context.Context, s3Event events.S3Event) error {
+	log.Printf("[INFO] Received S3 event with %d records", len(s3Event.Records))
+
 	if err := coldStart(ctx); err != nil {
 		return fmt.Errorf("failed to initialize AWS clients: %v", err)
 	}
@@ -74,44 +76,59 @@ func handleRequest(ctx context.Context, s3Event events.S3Event) error {
 	s3Client := s3.NewFromConfig(cfg)
 
 	for _, record := range s3Event.Records {
+		log.Printf("[INFO] Processing S3 event: %s, Key: %s", record.EventName, record.S3.Object.Key)
+
 		// Extract advertiser from path
-		// Expected path format: qe-ft/[type]/[advertiser]/[campaignId]/...
 		pathParts := strings.Split(record.S3.Object.Key, "/")
-		if len(pathParts) < 4 {
-			return fmt.Errorf("invalid path structure: %s, expected qe-ft/type/advertiser/campaignId/...", record.S3.Object.Key)
+		if len(pathParts) < 3 {
+			log.Printf("[ERROR] Invalid path structure: %s", record.S3.Object.Key)
+			continue
 		}
-
-		// Get advertiser name from the correct path segment
 		advertiser := pathParts[2]
-		// Remove any campaign ID or other suffixes from advertiser name
-		advertiser = strings.Split(advertiser, "-")[0] // This will get "disney" from "disney1" or "disney-campaign1"
 
-		// Get appropriate handler for the advertiser
+		// Get the appropriate handler for the advertiser
 		handler, err := handlers.GetAdvertiserHandler(advertiser)
 		if err != nil {
-			return fmt.Errorf("advertiser handler error: %v (path: %s)", err, record.S3.Object.Key)
+			log.Printf("[ERROR] Failed to get handler for advertiser %s: %v", advertiser, err)
+			return err
 		}
 
 		switch record.EventName {
 		case "ObjectRemoved:Delete", "ObjectRemoved:DeleteMarkerCreated":
+			log.Printf("[INFO] Processing deletion event for key: %s", record.S3.Object.Key)
 			if err := handler.HandleDeletion(ctx, record, dynamoDb, s3Client); err != nil {
+				log.Printf("[ERROR] Failed to handle deletion: %v", err)
 				return fmt.Errorf("failed to handle deletion: %v", err)
 			}
 		case "ObjectCreated:Put", "ObjectCreated:Post":
+			log.Printf("[INFO] Processing creation event for key: %s", record.S3.Object.Key)
 			data, err := utils.GetFileFromS3WithClient(ctx, s3Client, record.S3.Bucket.Name, record.S3.Object.Key)
 			if err != nil {
+				log.Printf("[ERROR] Failed to get object from S3: %v", err)
 				return fmt.Errorf("failed to get object from S3: %v", err)
 			}
 
-			if strings.Contains(record.S3.Object.Key, "/campaigns/") {
+			if strings.Contains(record.S3.Object.Key, "/redemptions/") {
+				log.Printf("[INFO] Processing redemption file: %s", record.S3.Object.Key)
+				if err := handler.HandleRedemption(ctx, record, data, dynamoDb); err != nil {
+					log.Printf("[ERROR] Failed to process responder file: %v", err)
+					return fmt.Errorf("failed to handle responder file: %v", err)
+				}
+			} else if strings.Contains(record.S3.Object.Key, "/campaigns/") {
+				log.Printf("[INFO] Processing campaign file: %s", record.S3.Object.Key)
 				if err := handler.HandleCampaign(ctx, record, data, dynamoDb); err != nil {
 					return fmt.Errorf("failed to handle campaign: %v", err)
 				}
 			} else if strings.Contains(record.S3.Object.Key, "/promocodes/") {
+				log.Printf("[INFO] Processing promocode file: %s", record.S3.Object.Key)
 				if err := handler.HandlePromoCode(ctx, record, data, dynamoDb); err != nil {
 					return fmt.Errorf("failed to handle promocode: %v", err)
 				}
+			} else {
+				log.Printf("[WARN] Unhandled file path: %s", record.S3.Object.Key)
 			}
+		default:
+			log.Printf("[WARN] Unhandled event type: %s", record.EventName)
 		}
 	}
 	return nil

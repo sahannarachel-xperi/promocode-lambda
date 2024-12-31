@@ -12,6 +12,7 @@ type AdvertiserHandler interface {
 	HandleCampaign(ctx context.Context, event events.S3EventRecord, data []byte, dynamoClient DynamoDBAPI) error
 	HandlePromoCode(ctx context.Context, event events.S3EventRecord, data []byte, dynamoClient DynamoDBAPI) error
 	HandleDeletion(ctx context.Context, event events.S3EventRecord, dynamoClient DynamoDBAPI, s3Client S3API) error
+	HandleRedemption(ctx context.Context, event events.S3EventRecord, data []byte, dynamoClient DynamoDBAPI) error
 }
 
 // Factory function to get the appropriate handler based on advertiser

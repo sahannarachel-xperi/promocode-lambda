@@ -129,6 +129,7 @@ resource "aws_s3_bucket_notification" "lambda_trigger" {
   }
 }
 
+# S3 Lambda Permission - single permission is sufficient
 resource "aws_lambda_permission" "s3_permission" {
   statement_id  = "AllowS3Invoke"
   action        = "lambda:InvokeFunction"
@@ -137,22 +138,29 @@ resource "aws_lambda_permission" "s3_permission" {
   source_arn    = "arn:aws:s3:::${var.s3_source_bucket_name}"
 }
 
-resource "aws_lambda_permission" "s3permission" {
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.lambda.arn
-  principal     = "s3.amazonaws.com"
-  source_arn    = "arn:aws:s3:::${var.s3_source_bucket_name}"
+# Add S3 bucket notification for redemption files
+resource "aws_s3_bucket_notification" "bucket_notification" {
+  bucket = var.s3_source_bucket_name
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.lambda.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = "qe-ft/redemptions/"
+    filter_suffix       = ".csv"
+  }
 }
 
+# CloudWatch Log Group
 resource "aws_cloudwatch_log_group" "lambda_log_group" {
   name              = "/aws/lambda/${aws_lambda_function.lambda.function_name}"
   retention_in_days = var.retention_in_days
   tags              = local.tags
 }
 
+# CloudWatch Events Permission
 resource "aws_lambda_permission" "cloudwatch_permission" {
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.lambda.arn
+  function_name = aws_lambda_function.lambda.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.lambda_event_rule.arn
 }
@@ -220,4 +228,33 @@ resource "aws_iam_policy" "dynamodb_policy" {
 resource "aws_iam_role_policy_attachment" "dynamodb" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = aws_iam_policy.dynamodb_policy.arn
+}
+
+# Make sure Lambda has proper IAM role permissions
+resource "aws_iam_role_policy_attachment" "lambda_s3" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSLambdaExecute"
+}
+
+# Add specific S3 permissions if needed
+resource "aws_iam_role_policy" "lambda_s3_policy" {
+  name = "lambda_s3_policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.s3_source_bucket_name}",
+          "arn:aws:s3:::${var.s3_source_bucket_name}/*"
+        ]
+      }
+    ]
+  })
 }
